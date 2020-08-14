@@ -22,13 +22,26 @@ from aiohttp import web
 # loop.run_until_complete(init(loop))
 # loop.run_forever()
 
-async def index(request):
+HOST = '127.0.0.1'
+PORT = 9000
+
+routes = web.RouteTableDef()
+
+@routes.get('/')
+async def handler(request):
     return web.Response(body=b'<h1>Awesome</h1>', content_type='text/html')
+
 
 def init():
     app = web.Application()
-    app.add_routes([web.get('/', index)])
-    logging.info('Server started at 127.0.0.1:9000...')
-    web.run_app(app, host='127.0.0.1', port=9000)
+    app.add_routes(routes)
+    logging.info('Server started at http://{}:{}'.format(HOST, PORT))
+    web.run_app(app, host=HOST, port=PORT)
 
 init()
+
+
+
+
+
+
