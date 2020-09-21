@@ -1,6 +1,8 @@
 import asyncio, logging
 import aiomysql
 
+
+
 def log(sql, args=()):
     logging.info('SQL: {}'.format(sql))
 
@@ -137,15 +139,15 @@ class ModelMetaclass(type):
         escaped_fields = [lambda s: '`{}`'.format(s) for s in fields]
         
 
-        attrs['__mappings__'] = mappings 
+        attrs['__mappings__'] = mappings # {'user_id': <IntegerField>,}
         attrs['__table__'] = tableName
         attrs['__primary_key__'] = primaryKey
         attrs['__fields__'] = fields # 主键以外的属性名
         attrs['__select__'] = 'SELECT `%s`, %s FROM `%s`' % (primaryKey, ', '.join(escaped_fields), tableName)
         attrs['__insert__'] = 'INSERT INTO `%s` (%s, `%s`) VALUES (%s)' % (tableName, ', '.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields) + 1))
-
+        attrs['__update__'] = 'update `%s` set %s where `%s`=?' % (tableName, ', '.join(map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)), primaryKey)
+        attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
         
-        pass # ...
 
         return type.__new__(cls, name, bases, attrs)
 
@@ -153,19 +155,33 @@ class ModelMetaclass(type):
 class Model(dict, metaclass=ModelMetaclass):
 
     def __init__(self, **kw):
+
         super(Model, self).__init__(**kw)
 
-    def __getattr__(self, key):
-        pass
+    def __getattr__(self, k):
 
-    def __setattr__(self, key, value):
-        pass
+        try:
+            return self[k]
+        except KeyError:
+            raise AttributeError(r"'Model' object has no attribute '%s'" % key)
+
+    def __setattr__(self, k, v):
+
+        self[k] = v
 
     def getValue(self, key):
-        pass
+        return getattr(self, key, None)
 
     def getValueOrDefault(self, key):
-        pass
+        value = getattr(self, key, None)
+        # If value not set, it may have a default value
+        if value is None:
+            field = self.__mappings__[key]
+            if field.default is not None:
+                value = field.default() if callable(field.default) else field.default
+                logging.debug('using default value for %s: %s' % (key, str(value)))
+                setattr(self, key, value)
+        return value
 
     @classmethod
     async def findAll(cls, where=None, args=None, **kw):
@@ -195,54 +211,80 @@ class Model(dict, metaclass=ModelMetaclass):
         return [cls(**r) for r in rs]
 
 
-    pass
+    @classmethod
+    async def findNumber(cls, selectField, where=None, args=None):
+        ' find number by select and where. '
+        sql = ['select %s _num_ from `%s`' % (selectField, cls.__table__)]
+        if where:
+            sql.append('where')
+            sql.append(where)
+        rs = await select(' '.join(sql), args, 1)
+        if len(rs) == 0:
+            return None
+        return rs[0]['_num_']
+
+    @classmethod
+    async def find(cls, pk):
+        ' find object by primary key. '
+        rs = await select('%s where `%s`=?' % (cls.__select__, cls.__primary_key__), [pk], 1)
+        if len(rs) == 0:
+            return None
+        return cls(**rs[0])
 
     async def save(self):
+        # 调用示例：
+        # user = User(id=123, name='Michael')
+        # await user.save()
         args = list(map(self.getValueOrDefault, self.__fields__))
         args.append(self.getValueOrDefault(self.__primary_key__))
         rows = await execute(self.__insert__, args)
         if rows != 1:
             logging.warn('failded to insert record: affected rows: %s' % rows)
 
+    async def update(self):
+        args = list(map(self.getValue, self.__fields__))
+        args.append(self.getValue(self.__primary_key__))
+        rows = await execute(self.__update__, args)
+        if rows != 1:
+            logging.warn('failed to update by primary key: affect rows: %s' % rows)
+
+    async def remove(self):
+        args = [self.getValue(self.__primary_key__)]
+        rows = await execute(self.__delete__, args)
+        if row != 1:
+            logging.warn('failed to remove by primary key: affected rows: %s' % rows)
+
 
 
 
 # ----------------------------------- For testing ----------------------------------
 if __name__ == '__main__':
+
+    class User(Model):
+        __table__ = 'users'
+
+        id = IntegerField(primary_key=True)
+        name = StringField()
     
-    loop = asyncio.get_event_loop()
 
-    # async def test_example():
-    #     # use await wherever you need to talk to database to keep asyncio working.
-    #     conn = await aiomysql.connect(host='127.0.0.1', port=3306,
-    #                                         user='root', password='password', db='mysql',
-    #                                         loop=loop)
-        
-    #     cur = await conn.cursor()
-    #     await cur.execute("SELECT Host, User FROM user")
-    #     print(cur.description)
-    #     r = await cur.fetchall()
-    #     print(r)
-    #     await cur.close()
-    #     conn.close()
 
-    # loop.run_until_complete(test_example())
+    # loop = asyncio.get_event_loop()
 
-    async def go():
-        pool = await aiomysql.create_pool(host='127.0.0.1', port=3306,
-                                        user='root', password='password', db='mysql',
-                                        loop=loop, autocommit=False)
+    # async def go():
+    #     pool = await aiomysql.create_pool(host='127.0.0.1', port=3306,
+    #                                     user='root', password='password', db='mysql',
+    #                                     loop=loop, autocommit=False)
 
-        async with pool.acquire() as conn:
-            cur = await conn.cursor()
-            await cur.execute("SELECT 10")
-            (r,) = await cur.fetchone()
-            assert r == 10
+    #     async with pool.acquire() as conn:
+    #         cur = await conn.cursor()
+    #         await cur.execute("SELECT 10")
+    #         (r,) = await cur.fetchone()
+    #         assert r == 10
 
-        pool.close()
-        await pool.wait_closed()
+    #     pool.close()
+    #     await pool.wait_closed()
 
-    loop.run_until_complete(go())
+    # loop.run_until_complete(go())
 
 
 
