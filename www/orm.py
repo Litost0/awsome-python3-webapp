@@ -125,7 +125,7 @@ class ModelMetaclass(type):
                 logging.info(' found mapping: %s ===> %s' % (k, v))
                 mappings[k] = v
                 if v.primary_key:
-                    if primary_key:
+                    if primaryKey:
                         raise StandardError('Duplicate primary key for field: %s' % k)
                     primaryKey = k
                 else: 
@@ -136,7 +136,7 @@ class ModelMetaclass(type):
         if k in mappings.keys():
             attrs.pop(k)
 
-        escaped_fields = [lambda s: '`{}`'.format(s) for s in fields]
+        escaped_fields = list(map(lambda f: '`%s`' % f, fields))
         
 
         attrs['__mappings__'] = mappings # {'user_id': <IntegerField>,}
